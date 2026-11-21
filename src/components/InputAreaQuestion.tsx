@@ -158,6 +158,12 @@ export function InputAreaQuestion(props: InputAreaQuestionProps) {
         </Show>
       </div>
 
+      <Show when={props.question.message}>
+        <div class={styles.requestMessage} data-question-message tabIndex={0}>
+          {props.question.message}
+        </div>
+      </Show>
+
       <Show when={externalUrl()}>
         {(url) => (
           <a

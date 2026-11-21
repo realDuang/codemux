@@ -67,6 +67,17 @@ describe("Remote access admission", () => {
       expect(isRemoteAccessRequestAllowed(request({ host: "codemux.example.com" }), { ...active, url: "" })).toBe(false);
     });
 
+    it("treats a forwarded Dev Tunnel as remote and checks both its Host and Origin", () => {
+      const host = "codemux-test-8233.jpe1.devtunnels.ms";
+      const active = { mode: "devtunnel" as const, url: `https://${host}` };
+      const forwarded = request({ host, origin: active.url, "x-forwarded-for": "203.0.113.1" }, "127.0.0.1");
+      expect(isRemoteAccessRequestAllowed(forwarded, active)).toBe(true);
+      expect(isRemoteAccessRequestAllowed(forwarded, active, true)).toBe(true);
+      expect(isRemoteAccessRequestAllowed(forwarded, { mode: "off", url: "" })).toBe(false);
+      expect(isRemoteAccessRequestAllowed(request({ host, origin: "https://other.devtunnels.ms" }, "127.0.0.1"), active)).toBe(false);
+      expect(isRemoteAccessRequestAllowed(request({ host: "localhost:8233", "x-forwarded-for": "203.0.113.1" }, "127.0.0.1"), active)).toBe(false);
+    });
+
     it("keeps Electron and local development WebSockets usable while rejecting foreign origins", () => {
       const disabled = { mode: "off" as const, url: "" };
       for (const origin of [undefined, "null", "file://", "http://localhost:8233"]) {

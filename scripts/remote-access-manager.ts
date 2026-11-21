@@ -2,6 +2,9 @@ import { RemoteAccessController } from "../shared/remote-access-controller";
 import { WEB_STANDALONE_PORT } from "../shared/ports";
 import { loadSettings, saveSettings } from "./settings-store";
 import { tunnelManager } from "./tunnel-manager";
+import { DevTunnelManager } from "../shared/dev-tunnel-manager";
+
+const devTunnelManager = new DevTunnelManager({ loadSettings, saveSettings });
 
 /** Standalone hosts use the same policy authority as Electron's main process. */
 export const remoteAccessManager = new RemoteAccessController({
@@ -9,6 +12,7 @@ export const remoteAccessManager = new RemoteAccessController({
   saveSettings,
   tunnel: tunnelManager,
   getPort: () => WEB_STANDALONE_PORT,
+  devTunnel: devTunnelManager,
 });
 
 tunnelManager.setOnUnexpectedExit(() => {

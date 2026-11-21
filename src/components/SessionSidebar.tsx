@@ -87,7 +87,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
   ));
   const sessionRemovalLabel = (session: SessionInfo) => {
     const capabilities = configStore.engines.find((engine) => engine.type === session.engineType)?.capabilities;
-    return !session.catalogSourceId && !capabilities?.hideArchivedSessions && capabilities?.authoritativeSessionState
+    return session.connection?.localRemovalOnly || (!session.catalogSourceId && !capabilities?.hideArchivedSessions && capabilities?.authoritativeSessionState)
       ? t().sidebar.removeLocalSession : t().sidebar.deleteSession;
   };
 
@@ -677,6 +677,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                             onClick={startEditing}
                             class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                             title={t().sidebar.renameSession}
+                            classList={{ hidden: session.connection?.canRename === false }}
                             disabled={session.catalogAvailable === false}
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1057,6 +1058,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                       onClick={startEditing}
                                       class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                                       title={t().sidebar.renameSession}
+                                      classList={{ hidden: session.connection?.canRename === false }}
                                       disabled={session.catalogAvailable === false}
                                     >
                                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1480,6 +1482,7 @@ export function SessionSidebar(props: SessionSidebarProps) {
                                     onClick={startEditing}
                                     class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-all"
                                     title={t().sidebar.renameSession}
+                                    classList={{ hidden: session.connection?.canRename === false }}
                                     disabled={session.catalogAvailable === false}
                                   >
                                     <svg

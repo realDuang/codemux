@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   windows: [] as any[], tunnels: [] as any[],
   fetch: vi.fn(), openExternal: vi.fn(),
+  authPrepare: vi.fn(), authorization: vi.fn(), authClose: vi.fn(),
   start: vi.fn(), stop: vi.fn(), handlers: new Map<string, (...args: any[]) => unknown>(),
 }));
 
@@ -18,7 +19,7 @@ vi.mock("electron", () => ({
     loadURL = vi.fn(async () => {});
     webContents = Object.assign(new EventEmitter(), {
       setWindowOpenHandler: vi.fn(), mainFrame: {},
-      session: { fetch: mocks.fetch, setPermissionRequestHandler: vi.fn() },
+      session: { fetch: mocks.fetch, setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: vi.fn() } },
     });
     constructor(readonly options: unknown) { super(); mocks.windows.push(this); }
     isDestroyed() { return this.destroyed; }
@@ -26,6 +27,13 @@ vi.mock("electron", () => ({
   },
   shell: { openExternal: mocks.openExternal },
   ipcMain: { handle: (name: string, handler: (...args: any[]) => unknown) => mocks.handlers.set(name, handler) },
+}));
+vi.mock("../../../shared/dev-tunnel-client-auth", () => ({
+  DevTunnelClientAuth: class {
+    prepare = mocks.authPrepare;
+    authorization = mocks.authorization;
+    close = mocks.authClose;
+  },
 }));
 vi.mock("../../../electron/main/services/ssh-connection", () => ({
   SshConnection: class {
@@ -50,6 +58,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ mode: "custom" }) });
   mocks.openExternal.mockResolvedValue(undefined);
+  mocks.authPrepare.mockResolvedValue(true);
+  mocks.authorization.mockResolvedValue("tunnel test-credential");
+  mocks.authClose.mockResolvedValue(undefined);
   mocks.start.mockResolvedValue({ url: "http://127.0.0.1:19333", localPort: 19333 });
   mocks.stop.mockResolvedValue(undefined);
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "codemux-remote-host-test-"));
@@ -76,6 +87,110 @@ describe("remoteHostWindowOptions", () => {
 });
 
 describe("RemoteHostManager", () => {
+  it("authenticates private Dev Tunnels with the CLI account without an embedded login window", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "codemux-test-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValueOnce(new Error("Redirect requires login"));
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ mode: "devtunnel" }) });
+    await manager.connect(host.id);
+    expect(mocks.windows).toHaveLength(1);
+    const [app] = mocks.windows;
+    expect(mocks.authPrepare).toHaveBeenCalledWith("https://codemux-test-8233.jpe1.devtunnels.ms");
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(app.show).toHaveBeenCalled();
+    const preventDefault = vi.fn();
+    app.webContents.emit("will-redirect", { preventDefault }, "https://login.microsoftonline.com/");
+    expect(preventDefault).toHaveBeenCalled();
+    expect(manager.list()[0].status).toBe("connected");
+    const headers = app.webContents.session.webRequest.onBeforeSendHeaders;
+    const handler = headers.mock.calls[0][0];
+    for (const protocol of ["https", "wss"]) {
+      const callback = vi.fn();
+      handler({ url: `${protocol}://codemux-test-8233.jpe1.devtunnels.ms/api`, requestHeaders: { Authorization: "Bearer codemux-token" } }, callback);
+      await vi.waitFor(() => expect(callback).toHaveBeenCalledWith({
+        requestHeaders: { Authorization: "Bearer codemux-token", "X-Tunnel-Authorization": "tunnel test-credential" },
+      }));
+    }
+    for (const url of ["https://login.microsoftonline.com/", "https://other-8233.jpe1.devtunnels.ms/", "http://codemux-test-8233.jpe1.devtunnels.ms/",
+      "https://codemux-test-8233.jpe1.devtunnels.ms:8443/", "https://user@codemux-test-8233.jpe1.devtunnels.ms/"]) {
+      const callback = vi.fn();
+      handler({ url, requestHeaders: { "x-tunnel-authorization": "inherited", Accept: "text/html" } }, callback);
+      expect(callback).toHaveBeenCalledWith({ requestHeaders: { Accept: "text/html" } });
+    }
+    await manager.disconnect(host.id);
+    expect(headers).toHaveBeenLastCalledWith(null);
+    expect(mocks.authClose).toHaveBeenCalledOnce();
+  });
+
+  it("cancels pending account authentication without opening a browser or resurrecting the connection", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "codemux-test-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValue(new Error("Login required"));
+    let finish!: (prepared: boolean) => void;
+    mocks.authPrepare.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const connecting = manager.connect(host.id);
+    const cancelled = expect(connecting).rejects.toThrow("cancelled");
+    await vi.waitFor(() => expect(mocks.authPrepare).toHaveBeenCalled());
+    await manager.disconnect(host.id);
+    finish(true);
+    await cancelled;
+    expect(mocks.authClose).toHaveBeenCalledOnce();
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(mocks.windows.every(window => window.isDestroyed())).toBe(true);
+    expect(manager.list()[0].status).toBe("disconnected");
+  });
+
+  it("hands unmatched private links to the system browser without claiming a desktop connection", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "other-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValue(new Error("Login required"));
+    mocks.authPrepare.mockResolvedValue(false);
+    await manager.connect(host.id);
+    expect(mocks.openExternal).toHaveBeenCalledWith("https://other-8233.jpe1.devtunnels.ms/?connect=1");
+    expect(mocks.windows).toHaveLength(1);
+    expect(mocks.windows[0].show).not.toHaveBeenCalled();
+    expect(mocks.windows[0].isDestroyed()).toBe(true);
+    expect(manager.list()[0].status).toBe("external");
+    await manager.connect(host.id);
+    expect(mocks.openExternal).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports external browser launch failure and does not fall back to embedded login", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "other-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValue(new Error("Login required"));
+    mocks.authPrepare.mockResolvedValue(false);
+    mocks.openExternal.mockRejectedValueOnce(new Error("Browser launch failed"));
+    await expect(manager.connect(host.id)).rejects.toThrow("Browser launch failed");
+    expect(manager.list()[0].status).toBe("error");
+    expect(mocks.windows).toHaveLength(1);
+    expect(mocks.windows[0].isDestroyed()).toBe(true);
+  });
+
+  it("keeps anonymous tunnel connections in the desktop without requesting credentials", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "public-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ mode: "devtunnel" }) });
+    await manager.connect(host.id);
+    expect(mocks.authPrepare).not.toHaveBeenCalled();
+    expect(mocks.openExternal).not.toHaveBeenCalled();
+    expect(manager.list()[0].status).toBe("connected");
+  });
+
+  it("fails closed on credential refresh and allows reconnecting with a fresh account session", async () => {
+    const host = await manager.save({ connection: { type: "direct", host: "codemux-test-8233.jpe1.devtunnels.ms", port: 443, useTls: true } });
+    mocks.fetch.mockRejectedValueOnce(new Error("Login required"));
+    await manager.connect(host.id);
+    const [app] = mocks.windows;
+    const handler = app.webContents.session.webRequest.onBeforeSendHeaders.mock.calls[0][0];
+    mocks.authorization.mockRejectedValueOnce(new Error("sensitive raw CLI failure"));
+    const callback = vi.fn();
+    handler({ url: "wss://codemux-test-8233.jpe1.devtunnels.ms/ws", requestHeaders: {} }, callback);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith({ cancel: true }));
+    expect(app.isDestroyed()).toBe(true);
+    expect(manager.list()[0]).toMatchObject({ status: "error", error: expect.stringContaining("Reconnect") });
+    expect(JSON.stringify(manager.list())).not.toContain("sensitive");
+    mocks.fetch.mockRejectedValueOnce(new Error("Login required"));
+    await manager.connect(host.id);
+    expect(mocks.windows).toHaveLength(2);
+    expect(manager.list()[0].status).toBe("connected");
+  });
+
   it("opens the complete remote Web origin and reuses its existing window", async () => {
     const host = await manager.save(direct);
     await Promise.all([manager.connect(host.id), manager.connect(host.id)]);
@@ -174,6 +289,28 @@ describe("RemoteHostManager", () => {
 });
 
 describe("registerRemoteHostIpc", () => {
+  it("restricts discovery and login to the main desktop frame with an explicit boolean login choice", async () => {
+    const mainFrame = {};
+    const contents = { mainFrame };
+    const discover = vi.spyOn(manager, "discoverDevTunnels").mockResolvedValue({ status: "ready", tunnels: [] });
+    const cancel = vi.spyOn(manager, "cancelDevTunnelDiscovery").mockResolvedValue();
+    registerRemoteHostIpc(manager, () => ({ webContents: contents, isDestroyed: () => false }) as any);
+    const caller = { sender: contents, senderFrame: mainFrame };
+    const discovery = mocks.handlers.get("remoteHosts:discoverDevTunnels")!;
+    const cancellation = mocks.handlers.get("remoteHosts:cancelDevTunnelDiscovery")!;
+    for (const invalid of [{ sender: {}, senderFrame: mainFrame }, { sender: contents, senderFrame: {} }]) {
+      expect(() => discovery(invalid, true)).toThrow("local desktop");
+      expect(() => cancellation(invalid)).toThrow("local desktop");
+    }
+    for (const invalid of [undefined, "true", 1, {}]) expect(() => discovery(caller, invalid)).toThrow("Invalid login choice");
+    expect(discover).not.toHaveBeenCalled();
+    await discovery(caller, false);
+    await discovery(caller, true);
+    await cancellation(caller);
+    expect(discover.mock.calls).toEqual([[false], [true]]);
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("rejects remote renderers and subframes before invoking host management", () => {
     const mainFrame = {};
     const contents = { mainFrame };

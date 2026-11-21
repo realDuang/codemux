@@ -5,6 +5,7 @@
 import { EventEmitter } from "events";
 import { randomUUID } from "node:crypto";
 import { EngineAdapter, type EngineAdapterEvents } from "../engines/engine-adapter";
+import type { SessionSource } from "../session-sources/session-source";
 import { conversationStore, makeCatalogProjectId } from "../services/conversation-store";
 import { getDefaultWorkspacePath } from "../services/default-workspace";
 import { engineManagerLog, getDefaultEngineFromSettings } from "../services/logger";
@@ -14,6 +15,7 @@ import { mimeToFileExtension } from "../../../shared/image-limits";
 import type {
   EngineType,
   EngineInfo,
+  SessionSourceState,
   UnifiedSession,
   UnifiedQuestion,
   UnifiedPermission,
@@ -143,6 +145,25 @@ export declare interface EngineManager {
 }
 
 export class EngineManager extends EventEmitter {
+  private sessionSources = new Map<string, SessionSource>();
+
+  registerSessionSource(source: SessionSource): void {
+    const id = source.getState().id;
+    if (this.sessionSources.has(id)) throw new Error(`Session source already registered: ${id}`);
+    this.sessionSources.set(id, source);
+  }
+
+  listSessionSources(): SessionSourceState[] {
+    return [...this.sessionSources.values()].map(source => source.getState());
+  }
+
+  async setSessionSourceEnabled(sourceId: string, enabled: boolean): Promise<SessionSourceState> {
+    if (typeof enabled !== "boolean") throw new Error("enabled must be a boolean");
+    const source = this.sessionSources.get(sourceId);
+    if (!source) throw new Error("Unknown session source.");
+    return source.setEnabled(enabled);
+  }
+
   private adapters = new Map<EngineType, EngineAdapter>();
   private projectBindings = new Map<string, EngineType>();
   /** conversationId → engineType lookup for routing */
@@ -645,7 +666,7 @@ export class EngineManager extends EventEmitter {
 
   private forwardEvents(adapter: EngineAdapter): void {
     adapter.on("catalog.updated", (snapshot) => {
-      if (!adapter.getCapabilities().sessionCatalog) return;
+      if (!adapter.getCapabilities().sessionCatalog && !adapter.getCapabilities().externalSessionCatalog) return;
       try {
         this.applyCatalog(adapter, snapshot);
       } catch (error) {
@@ -668,7 +689,7 @@ export class EngineManager extends EventEmitter {
 
       // External engines supply complete live messages on read; their streaming
       // state must not depend on this process's persistence buffers.
-      if (adapter.getCapabilities().authoritativeSessionState) {
+      if (adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState) {
         this.emit("message.part.updated", convId
           ? this.rewriteSessionId(data, engineSessionId, convId) as typeof data
           : data);
@@ -730,7 +751,7 @@ export class EngineManager extends EventEmitter {
 
       if (convId) {
         // Persist the message
-        const authoritative = adapter.getCapabilities().authoritativeSessionState === true;
+        const authoritative = adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState === true;
         this.persistMessage(convId, message, authoritative);
 
         // Rewrite sessionId and forward to frontend
@@ -773,7 +794,7 @@ export class EngineManager extends EventEmitter {
       }
 
       if (convId) {
-        if (adapter.getCapabilities().authoritativeSessionState) {
+        if (adapter.getSessionCapabilities(engineSessionId!).authoritativeSessionState) {
           const attachingLiveSnapshot = this.authoritativeAttaching.has(convId)
             && data.session.activityStatus !== undefined && data.session.activityStatus !== "error";
           this.rememberLiveSessionFields(convId, data.session, adapter.hasSession(engineSessionId!) || attachingLiveSnapshot);
@@ -793,7 +814,7 @@ export class EngineManager extends EventEmitter {
           if (typeof data.session.directory === "string") patch.directory = data.session.directory;
           if (Object.keys(patch).length > 0) conversationStore.update(convId, patch);
         }
-        if (adapter.getCapabilities().authoritativeSessionState && current && Object.prototype.hasOwnProperty.call(data.session, "title")) {
+        if (adapter.getSessionCapabilities(engineSessionId!).authoritativeSessionState && current && Object.prototype.hasOwnProperty.call(data.session, "title")) {
           const title = data.session.title?.trim() || undefined;
           if (current.engineTitle !== title || current.customTitle !== undefined) {
             conversationStore.update(convId, { customTitle: undefined, engineTitle: title });
@@ -876,13 +897,17 @@ export class EngineManager extends EventEmitter {
         if (eventSessionId && (this.ignoreSessionEvent(adapter, eventSessionId)
           || (adapter.getCapabilities().hideArchivedSessions && data?.session?.archived))) return;
         if (event === "status.changed" && data?.status === "running") {
-          if (adapter.getCapabilities().sessionCatalog) {
+          if (adapter.getCapabilities().sessionCatalog || adapter.getCapabilities().externalSessionCatalog) {
             void this.refreshCatalog(adapter).catch((error) => engineManagerLog.warn(`Failed to refresh catalog for ${adapter.engineType}:`, error));
           } else if (adapter.getCapabilities().authoritativeSessionState) {
             this.reconnectPersistedAuthoritativeSessions(adapter);
           }
-        } else if (event === "status.changed" && ["stopped", "error"].includes(data?.status) && adapter.getCapabilities().sessionCatalog) {
-          this.markCatalogsUnavailable(adapter.engineType);
+        } else if (event === "status.changed" && ["stopped", "error"].includes(data?.status)
+          && (adapter.getCapabilities().sessionCatalog || adapter.getCapabilities().externalSessionCatalog)) {
+          if (adapter.getCapabilities().externalSessionCatalog) {
+            // A local SDK stopping does not disconnect independent host sources.
+            void this.refreshCatalog(adapter).catch((error) => engineManagerLog.warn(`Failed to refresh external catalog for ${adapter.engineType}:`, error));
+          } else this.markCatalogsUnavailable(adapter.engineType);
         }
         // Track permission → engine mapping for routing replies
         if (event === "permission.asked" && data?.permission?.id) {
@@ -1510,12 +1535,14 @@ export class EngineManager extends EventEmitter {
     const conv = conversationStore.get(sessionId);
     if (!conv) return null;
     const adapter = this.getAdapter(conv.engineType);
-    const capabilities = adapter?.getCapabilities();
+    const capabilities = adapter?.getSessionCapabilities(conv.engineSessionId ?? "");
     if (conv.archived && capabilities?.hideArchivedSessions) {
       await this.purgeRemovedConversation(conv, "archived");
       return null;
     }
-    if (conv.engineSessionId && adapter && conv.catalogAvailable !== false && (capabilities?.authoritativeSessionState || capabilities?.sessionArchive)) {
+    if (conv.engineSessionId && adapter && conv.catalogAvailable !== false
+      && !this.requiresUnavailableExecutor(sessionId)
+      && (capabilities?.authoritativeSessionState || capabilities?.sessionArchive)) {
       if (capabilities.authoritativeSessionState) await this.ensureAuthoritativeSession(conv, adapter);
       const session = await adapter.getSession(conv.engineSessionId);
       if (!conversationStore.get(sessionId)) return null;
@@ -1550,7 +1577,7 @@ export class EngineManager extends EventEmitter {
     if (!conv) return;
     const removalAdapter = this.getAdapter(conv.engineType);
     if (removalAdapter) this.assertSessionCompatible(conv, removalAdapter);
-    if (removalAdapter?.getCapabilities().confirmedSessionRemoval) {
+    if (removalAdapter?.getSessionCapabilities(conv.engineSessionId ?? "").confirmedSessionRemoval) {
       if (!conv.engineSessionId) throw new Error("The conversation has no confirmed native identity.");
       const capabilities = removalAdapter.getCapabilities();
       let sourceId = conv.catalogSourceId;
@@ -1675,7 +1702,7 @@ export class EngineManager extends EventEmitter {
 
     const trimmed = title.trim();
     const adapter = this.getAdapter(conv.engineType);
-    const authoritative = adapter?.getCapabilities().authoritativeSessionState === true;
+    const authoritative = adapter?.getSessionCapabilities(conv.engineSessionId ?? "").authoritativeSessionState === true;
     if (authoritative) {
       if (!conv.engineSessionId) throw new Error("The shared conversation is not connected.");
       await this.ensureAuthoritativeSession(conv, adapter);
@@ -1712,7 +1739,7 @@ export class EngineManager extends EventEmitter {
     const conv = conversationStore.get(sessionId);
     if (!conv) throw new Error(`Session ${sessionId} not found`);
     const adapter = this.getAdapterOrThrow(conv.engineType);
-    const capabilities = adapter.getCapabilities();
+    const capabilities = adapter.getSessionCapabilities(conv.engineSessionId ?? "");
     if (!capabilities.sessionArchive) throw new Error("This engine does not support archiving sessions.");
     if (!conv.engineSessionId) throw new Error("The conversation is not connected to its engine.");
     if (capabilities.authoritativeSessionState) await this.ensureAuthoritativeSession(conv, adapter);
@@ -1809,13 +1836,13 @@ export class EngineManager extends EventEmitter {
 
       const adapter = this.getAdapterForSession(sessionId);
       const resolvedOptions = this.resolveSessionOptions(conv, options);
-      this.validateReasoningEffort(adapter, resolvedOptions.reasoningEffort);
+      this.validateReasoningEffort(adapter, resolvedOptions.reasoningEffort, conv.engineSessionId);
 
       // Lazy engine session creation: first sendMessage triggers adapter.createSession()
       // Also re-create if the adapter lost track of the session (e.g. after app restart,
       // the persisted engineSessionId refers to a cs_ ID that only existed in runtime memory).
       let engineSessionId = conv.engineSessionId;
-      if (conv.catalogSourceId || (engineSessionId && adapter.getCapabilities().authoritativeSessionState)) {
+      if (conv.catalogSourceId || (engineSessionId && adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState)) {
         if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
         await this.ensureAuthoritativeSession(conv, adapter);
       } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
@@ -1829,7 +1856,7 @@ export class EngineManager extends EventEmitter {
 
       // Persist user message before sending to engine
       // (Some adapters like OpenCode don't emit user message events)
-      if (!adapter.getCapabilities().authoritativeSessionState) {
+      if (!adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState) {
         await this.persistUserMessage(sessionId, content, trackQueuedTiming);
       }
 
@@ -1852,7 +1879,7 @@ export class EngineManager extends EventEmitter {
       // and only restore it on session.idle — if that event is lost (e.g. WebSocket
       // reconnect), the field stays undefined, causing the frontend timer to tick
       // indefinitely on an already-finished message.
-      if (!adapter.getCapabilities().authoritativeSessionState && result.role === "assistant" && !result.time.completed) {
+      if (!adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState && result.role === "assistant" && !result.time.completed) {
         const finalized = { ...result, time: { ...result.time, completed: Date.now() } };
         this.persistMessage(sessionId, finalized);
         this.emit("message.updated", { sessionId, message: finalized });
@@ -1900,7 +1927,8 @@ export class EngineManager extends EventEmitter {
       await this.purgeRemovedConversation(conv, "archived");
       return [];
     }
-    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
+    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getSessionCapabilities(conv.engineSessionId).authoritativeSessionState
+      && !this.requiresUnavailableExecutor(sessionId)) {
       await this.ensureAuthoritativeSession(conv, adapter);
       return this.runMessageWrite(sessionId, async () => {
         if (!conversationStore.get(sessionId)) return [];
@@ -1922,7 +1950,9 @@ export class EngineManager extends EventEmitter {
     if (!conversationStore.get(sessionId)) return [];
     // Backfill costUnit for legacy Copilot data (cost stored without unit)
     const engineType = this.sessionEngineMap.get(sessionId);
-    const scopeMirror = !adapter || adapter.getCapabilities().authoritativeSessionState || !!conv?.catalogSourceId;
+    const capabilities = adapter?.getSessionCapabilities(conv.engineSessionId ?? "");
+    const scopeMirror = !capabilities?.sourceScopedMessageIds
+      && (!adapter || capabilities?.authoritativeSessionState || !!conv?.catalogSourceId);
 
     return messages.map((msg) => {
       // Content parts only — steps are lazy-loaded via getMessageSteps()
@@ -1969,7 +1999,8 @@ export class EngineManager extends EventEmitter {
         ? parts.map((part) => normalizeToolPartDisplay(this.mirrorPart(sessionId, storedId, part), conv.directory))
         : [];
     }
-    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getCapabilities().authoritativeSessionState) {
+    if (conv?.engineSessionId && conv.catalogAvailable !== false && adapter?.getSessionCapabilities(conv.engineSessionId).authoritativeSessionState
+      && !this.requiresUnavailableExecutor(sessionId)) {
       await this.ensureAuthoritativeSession(conv, adapter);
       const messages = await this.readAuthoritativeHistory(sessionId, conv.engineSessionId, adapter);
       if (!conversationStore.get(sessionId)) return [];
@@ -2037,6 +2068,9 @@ export class EngineManager extends EventEmitter {
       const current = await this.refreshCatalog(adapter);
       if (current.sourceId !== conv.catalogSourceId) throw new Error("This conversation belongs to another catalog source.");
       if (conversationStore.get(conv.id)?.catalogAvailable === false) throw new Error("This conversation is unavailable in the current catalog.");
+    }
+    if (this.requiresUnavailableExecutor(conv.id)) {
+      throw new Error("The original session executor is unavailable. Reconnect it to continue.");
     }
     if (!conv.engineSessionId || adapter.hasSession(conv.engineSessionId)) return;
     const pending = this.authoritativeAttaching.get(conv.id);
@@ -2131,7 +2165,7 @@ export class EngineManager extends EventEmitter {
 
       // Lazy engine session creation (same pattern as sendMessage)
       let engineSessionId = conv.engineSessionId;
-      if (conv.catalogSourceId || (engineSessionId && adapter.getCapabilities().authoritativeSessionState)) {
+      if (conv.catalogSourceId || (engineSessionId && adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState)) {
         if (!engineSessionId) throw new Error("The catalog conversation has no native identity.");
         await this.ensureAuthoritativeSession(conv, adapter);
       } else if (!engineSessionId || !adapter.hasSession(engineSessionId)) {
@@ -2143,7 +2177,7 @@ export class EngineManager extends EventEmitter {
 
       // Persist user command message
       const commandText = `/${commandName}${args ? ` ${args}` : ""}`;
-      if (!adapter.getCapabilities().authoritativeSessionState) {
+      if (!adapter.getSessionCapabilities(engineSessionId).authoritativeSessionState) {
         await this.persistUserMessage(sessionId, [{ type: "text", text: commandText }], trackQueuedTiming);
       }
 
@@ -2221,8 +2255,8 @@ export class EngineManager extends EventEmitter {
 
     const existing = conversationStore.get(sessionId);
     const existingAdapter = existing && this.getAdapter(existing.engineType);
-    if (existingAdapter) this.validateReasoningEffort(existingAdapter, config.reasoningEffort);
-    if (existing?.engineSessionId && existingAdapter?.getCapabilities().authoritativeSessionState) {
+    if (existingAdapter) this.validateReasoningEffort(existingAdapter, config.reasoningEffort, existing?.engineSessionId);
+    if (existing?.engineSessionId && existingAdapter?.getSessionCapabilities(existing.engineSessionId).authoritativeSessionState) {
       await this.ensureAuthoritativeSession(existing, existingAdapter);
       await this.applySessionConfig(existingAdapter, existing.engineSessionId, config);
       const confirmed = await existingAdapter.getSession(existing.engineSessionId);
@@ -2259,8 +2293,13 @@ export class EngineManager extends EventEmitter {
     }
   }
 
-  private validateReasoningEffort(adapter: EngineAdapter, effort: ReasoningEffort | null | undefined): void {
-    const supported = adapter.getCapabilities().reasoningEffortOptions ?? REASONING_EFFORT_VALUES;
+  private requiresUnavailableExecutor(sessionId: string): boolean {
+    const connection = this.authoritativeSessions.get(sessionId)?.connection;
+    return connection?.authoritative === true && !connection.available;
+  }
+
+  private validateReasoningEffort(adapter: EngineAdapter, effort: ReasoningEffort | null | undefined, sessionId?: string): void {
+    const supported = adapter.getSessionCapabilities(sessionId ?? "").reasoningEffortOptions ?? REASONING_EFFORT_VALUES;
     if (effort != null && !(supported as readonly string[]).includes(effort)) {
       throw new Error(`This engine does not support reasoning effort: ${effort}`);
     }

@@ -3,10 +3,16 @@ import { createHash } from "node:crypto";
 import { getDirectHostUrl, type RemoteHostInput, type RemoteHostState, type SavedRemoteHost } from "../../shared/remote-hosts";
 import { RemoteHostStore } from "./services/remote-host-store";
 import { SshConnection } from "./services/ssh-connection";
+import { isRemoteAccessMode, type RemoteAccessMode } from "../../shared/remote-access";
+import { DevTunnelDiscovery } from "../../shared/dev-tunnel-discovery";
+import { DevTunnelClientAuth } from "../../shared/dev-tunnel-client-auth";
+import { readDevTunnelUrl } from "../../shared/dev-tunnel-metadata";
 
 interface ActiveHost {
   host: SavedRemoteHost;
   window?: BrowserWindow;
+  tunnelAuth?: DevTunnelClientAuth;
+  clearTunnelAuth?: () => void;
   ssh?: SshConnection;
   pending?: Promise<void>;
   retry?: ReturnType<typeof setTimeout>;
@@ -41,7 +47,19 @@ export class RemoteHostManager {
   private states = new Map<string, Pick<RemoteHostState, "status" | "error">>();
   private closing = false;
 
-  constructor(private store: RemoteHostStore, private onChange: (hosts: RemoteHostState[]) => void) {}
+  constructor(
+    private store: RemoteHostStore,
+    private onChange: (hosts: RemoteHostState[]) => void,
+    private discovery = new DevTunnelDiscovery(),
+    private createTunnelAuth = () => new DevTunnelClientAuth(),
+  ) {}
+
+  discoverDevTunnels(interactive: boolean) {
+    if (this.closing) throw new Error("CodeMux is shutting down");
+    return this.discovery.discover(interactive);
+  }
+
+  cancelDevTunnelDiscovery(): Promise<void> { return this.discovery.cancel(); }
 
   list(): RemoteHostState[] {
     return this.store.list().map(host => ({ ...host, ...this.states.get(host.id), status: this.states.get(host.id)?.status ?? "disconnected" }));
@@ -132,14 +150,31 @@ export class RemoteHostManager {
         if (this.isCurrent(entry)) void this.disconnect(entry.host.id);
       });
       // Probe through this Chromium session so system proxy and TLS behavior match navigation.
-      const response = await win.webContents.session.fetch(new URL("/api/remote-access/status", origin).href, {
-        signal: AbortSignal.timeout(15_000), redirect: "error",
-      });
-      const result: unknown = response.ok ? await response.json() : null;
-      if (!result || typeof result !== "object" || !("mode" in result) || !["off", "custom", "cloudflare"].includes(String(result.mode))) {
-        throw new Error("The address did not respond as a CodeMux server");
+      const probe = async (): Promise<RemoteAccessMode> => {
+        const response = await win.webContents.session.fetch(new URL("/api/remote-access/status", origin).href, {
+          signal: AbortSignal.timeout(15_000), redirect: "error",
+        });
+        const result: unknown = response.ok ? await response.json() : null;
+        if (!result || typeof result !== "object" || !("mode" in result) || !isRemoteAccessMode(result.mode)) {
+          throw new Error("The address did not respond as a CodeMux server");
+        }
+        return result.mode;
+      };
+      let mode: RemoteAccessMode;
+      try { mode = await probe(); }
+      catch (error) {
+        if (!readDevTunnelUrl(origin)) throw error;
+        if (!await this.authenticateTunnel(entry, origin)) {
+          if (!this.isCurrent(entry)) throw new Error("Connection cancelled", { cause: error });
+          await shell.openExternal(new URL("/?connect=1", origin).href);
+          const current = this.isCurrent(entry);
+          await this.release(entry);
+          if (current && !this.active.has(entry.host.id) && !this.closing) this.publish(entry.host.id, "external");
+          return;
+        }
+        mode = await probe();
       }
-      if (entry.host.connection.type === "direct" && result.mode === "off" && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname)) {
+      if (entry.host.connection.type === "direct" && mode === "off" && !["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname)) {
         throw new Error("Enable direct access on the remote CodeMux host first");
       }
       if (!this.isCurrent(entry)) throw new Error("Connection cancelled");
@@ -160,6 +195,40 @@ export class RemoteHostManager {
       }
       throw error;
     }
+  }
+
+  private async authenticateTunnel(entry: ActiveHost, origin: string): Promise<boolean> {
+    if (!this.isCurrent(entry)) throw new Error("Connection cancelled");
+    const auth = this.createTunnelAuth();
+    entry.tunnelAuth = auth;
+    if (!await auth.prepare(origin)) return false;
+    if (!this.isCurrent(entry)) throw new Error("Connection cancelled");
+    const webRequest = entry.window!.webContents.session.webRequest;
+    webRequest.onBeforeSendHeaders((details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      // Also strip inherited headers on redirects away from this exact HTTPS/WSS origin.
+      for (const name of Object.keys(requestHeaders)) {
+        if (name.toLowerCase() === "x-tunnel-authorization") delete requestHeaders[name];
+      }
+      const url = new URL(details.url);
+      if (!["https:", "wss:"].includes(url.protocol)) { callback({ requestHeaders }); return; }
+      if (url.protocol === "wss:") url.protocol = "https:";
+      if (url.origin !== origin || url.username || url.password) { callback({ requestHeaders }); return; }
+      if (!this.isCurrent(entry)) { callback({ cancel: true }); return; }
+      void auth.authorization().then(value => {
+        if (!this.isCurrent(entry)) { callback({ cancel: true }); return; }
+        requestHeaders["X-Tunnel-Authorization"] = value;
+        callback({ requestHeaders });
+      }).catch(() => {
+        callback({ cancel: true });
+        if (this.isCurrent(entry)) {
+          void this.release(entry).catch(() => {});
+          this.publish(entry.host.id, "error", "Dev Tunnels authorization expired or failed. Reconnect to sign in again.");
+        }
+      });
+    });
+    entry.clearTunnelAuth = () => webRequest.onBeforeSendHeaders(null);
+    return true;
   }
 
   private scheduleReconnect(entry: ActiveHost): void {
@@ -194,11 +263,13 @@ export class RemoteHostManager {
   }
 
   private async release(entry: ActiveHost): Promise<void> {
+    if (entry.cancelled) return;
     entry.cancelled = true;
     if (entry.retry) clearTimeout(entry.retry);
     if (this.active.get(entry.host.id) === entry) this.active.delete(entry.host.id);
+    entry.clearTunnelAuth?.();
     if (entry.window && !entry.window.isDestroyed()) entry.window.destroy();
-    await entry.ssh?.stop();
+    await Promise.all([entry.ssh?.stop(), entry.tunnelAuth?.close()]);
   }
 
   async disconnect(id: string): Promise<void> {
@@ -216,10 +287,10 @@ export class RemoteHostManager {
 
   async close(): Promise<void> {
     this.closing = true;
-    await Promise.all([...this.active.values()].map(async entry => {
+    await Promise.all([this.discovery.cancel(), ...[...this.active.values()].map(async entry => {
       await this.release(entry);
       this.publish(entry.host.id, "disconnected");
-    }));
+    })]);
   }
 
   /** An installer failure can return control to the still-running desktop. */

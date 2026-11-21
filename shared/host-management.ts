@@ -174,7 +174,7 @@ export class HostManagementController {
         return this.loadSettings();
       case "settings:save": {
         const patch = args[0] as Record<string, unknown>;
-        if (["remoteAccessMode", "customAccessUrl", "tunnelConfig"].some(key => key in patch)) {
+        if (["remoteAccessMode", "customAccessUrl", "tunnelConfig", "devTunnelConfig", "devTunnelIdentity"].some(key => key in patch)) {
           throw new Error("Use remote access controls to change connection settings.");
         }
         deps.settings.save(patch);

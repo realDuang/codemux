@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { EventEmitter } from "events";
+import type { SendMessageOptions, SessionBackendEvents } from "../../../shared/session-backend";
 import type {
   EngineType,
   EngineStatus,
@@ -73,73 +74,12 @@ export interface MessageBuffer {
 
 // --- Adapter Events ---
 
-export interface EngineAdapterEvents {
-  "catalog.updated": (snapshot: EngineCatalogSnapshot) => void;
-  /** A message part was created or updated */
-  "message.part.updated": (data: {
-    sessionId: string;
-    messageId: string;
-    part: UnifiedPart;
-  }) => void;
-
-  /** A message was created or completed */
-  "message.updated": (data: {
-    sessionId: string;
-    message: UnifiedMessage;
-  }) => void;
-
-  /** An authoritative conversation no longer contains this message. */
-  "message.removed": (data: { sessionId: string; messageId: string }) => void;
-
-  /** A session was updated (title, time, etc.) — partial updates allowed */
-  "session.updated": (data: {
-    session: Partial<UnifiedSession> & Pick<UnifiedSession, "id" | "engineType">;
-  }) => void;
-
-  /** A new session was created */
-  "session.created": (data: { session: UnifiedSession }) => void;
-
-  /** An authoritative source excludes a session and all of its mirrored data. */
-  "session.removed": (data: { sessionId: string }) => void;
-
-  /** A permission request from the agent */
-  "permission.asked": (data: { permission: UnifiedPermission }) => void;
-
-  /** A permission was replied to */
-  "permission.replied": (data: {
-    permissionId: string;
-    optionId: string;
-  }) => void;
-
-  /** A question request from the agent */
-  "question.asked": (data: { question: UnifiedQuestion }) => void;
-
-  /** A question was replied to */
-  "question.replied": (data: {
-    questionId: string;
-    answers: string[][];
-  }) => void;
-
+export interface EngineAdapterEvents extends SessionBackendEvents {
   /** Engine status changed */
   "status.changed": (data: {
     engineType: EngineType;
     status: EngineStatus;
     error?: string;
-  }) => void;
-
-  /** A message was enqueued (submitted while engine is busy) */
-  "message.queued": (data: {
-    sessionId: string;
-    messageId: string;
-    queuePosition: number;
-    clientMessageId?: string;
-  }) => void;
-
-  /** A previously queued message started being processed */
-  "message.queued.consumed": (data: {
-    sessionId: string;
-    messageId: string;
-    clientMessageId?: string;
   }) => void;
 
   /** Available slash commands / skills changed (e.g. after session init, Copilot skills reload) */
@@ -194,6 +134,9 @@ export abstract class EngineAdapter extends EventEmitter {
 
   /** Get engine capabilities and feature flags */
   abstract getCapabilities(): EngineCapabilities;
+
+  /** Execution drivers within one engine may own different session lifecycles. */
+  getSessionCapabilities(_sessionId: string): EngineCapabilities { return this.getCapabilities(); }
 
   /** Get available auth methods (e.g., Copilot login) */
   abstract getAuthMethods(): AuthMethod[];
@@ -294,14 +237,7 @@ export abstract class EngineAdapter extends EventEmitter {
   abstract sendMessage(
     sessionId: string,
     content: MessagePromptContent[],
-    options?: {
-      clientMessageId?: string;
-      mode?: string;
-      modelId?: string;
-      reasoningEffort?: ReasoningEffort | null;
-      serviceTier?: CodexServiceTier | null;
-      directory?: string;
-    },
+    options?: SendMessageOptions,
   ): Promise<UnifiedMessage>;
 
   /** Cancel an in-flight message */

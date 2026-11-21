@@ -222,7 +222,7 @@ export async function handleSettingsRoutes(
     }
     const patch: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
-      if (key === "customAccessUrl" || key === "remoteAccessMode" || key === "tunnelConfig") {
+      if (["customAccessUrl", "remoteAccessMode", "tunnelConfig", "devTunnelConfig", "devTunnelIdentity"].includes(key)) {
         sendJson(res, { error: "Use host remote access controls to change connection settings" }, 400);
         return true;
       }

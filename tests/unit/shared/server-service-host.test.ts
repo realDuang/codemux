@@ -18,10 +18,13 @@ const state = vi.hoisted(() => {
     createDesktopCatalogClient: vi.fn(() => ({ request: vi.fn() })),
   };
   const unified = adapter("codex");
+  const routed = { copilot: adapter("copilot"), claude: adapter("claude"), codex: adapter("codex") };
   const unsubscribe = vi.fn();
   return {
     codex,
     unified,
+    routed,
+    route: vi.fn((sdk: { engineType: string }, _source: unknown, _sourceId?: string) => routed[sdk.engineType as keyof typeof routed]),
     openCode: adapter("opencode"),
     copilot: adapter("copilot"),
     claude: adapter("claude"),
@@ -30,7 +33,7 @@ const state = vi.hoisted(() => {
     runtimeOptions: undefined as ServiceRuntimeOptions | undefined,
     catalogOptions: undefined as DesktopCatalogOptions | undefined,
     runtime: { stop: vi.fn(async () => {}), isStartupReady: vi.fn(() => true), isStopping: vi.fn(() => false) },
-    manager: { registerAdapter: vi.fn(), flushPendingState: vi.fn(async () => {}) },
+    manager: { registerAdapter: vi.fn(), registerSessionSource: vi.fn(), flushPendingState: vi.fn(async () => {}) },
     gateway: { revalidateClients: vi.fn(), close: vi.fn(async () => {}), getPort: vi.fn(() => 8233) },
     channels: { setWebhookServer: vi.fn(), registerAdapter: vi.fn() },
     unifiedFactory: vi.fn((_options: UnifiedCodexAdapterOptions) => unified),
@@ -57,6 +60,11 @@ vi.mock("../../../electron/main/gateway/ws-server", () => ({ GatewayServer: vi.f
 vi.mock("../../../electron/main/engines/opencode", () => ({ OpenCodeAdapter: vi.fn(function () { return state.openCode; }) }));
 vi.mock("../../../electron/main/engines/copilot", () => ({ CopilotSdkAdapter: vi.fn(function () { return state.copilot; }) }));
 vi.mock("../../../electron/main/engines/claude", () => ({ ClaudeCodeAdapter: vi.fn(function () { return state.claude; }) }));
+vi.mock("../../../electron/main/engines/host-routed-adapter", () => ({
+  HostRoutedAdapter: vi.fn(function (sdk: { engineType: string }, source: unknown, sourceId?: string) {
+    return state.route(sdk, source, sourceId);
+  }),
+}));
 vi.mock("../../../electron/main/engines/codex", () => ({ CodexAdapter: vi.fn(function () { return state.codex; }) }));
 vi.mock("../../../electron/main/engines/codex/unified-adapter", () => ({ UnifiedCodexAdapter: vi.fn(function (options: UnifiedCodexAdapterOptions) { return state.unifiedFactory(options); }) }));
 vi.mock("../../../electron/main/engines/codex/desktop-catalog-enrollment", () => ({ getOrCreateCodexCatalogEnrollment: state.enrollment }));
@@ -124,7 +132,7 @@ describe("createServiceHost", () => {
 
     createServiceHost("static");
 
-    const expected = [state.openCode, state.copilot, state.claude, state.unified];
+    const expected = [state.openCode, state.routed.copilot, state.routed.claude, state.routed.codex];
     expect(state.manager.registerAdapter.mock.calls.map(([registered]) => registered)).toEqual(expected);
     expect(state.runtimeOptions?.engines.map(([, engine]) => engine)).toEqual(expected);
     expect(state.unifiedFactory).toHaveBeenCalledOnce();
@@ -132,6 +140,19 @@ describe("createServiceHost", () => {
     expect(state.channels.registerAdapter).toHaveBeenCalledTimes(6);
     expect(state.enrollment).toHaveBeenCalledOnce();
     expect(state.codex.start).not.toHaveBeenCalled();
+  });
+
+  it("registers one shared session source separately from the engines and routes each supported engine through it", () => {
+    state.settings = { vscodeAgentHostEnabled: true };
+    createServiceHost("static");
+    expect(state.manager.registerSessionSource).toHaveBeenCalledOnce();
+    const source = state.manager.registerSessionSource.mock.calls[0][0];
+    expect(source.getState()).toMatchObject({ id: "vscode", enabled: true });
+    expect(state.runtimeOptions?.sessionSources).toEqual([["VS Code", source]]);
+    expect(state.runtimeOptions?.engines.map(([, engine]) => engine)).not.toContain(source);
+    expect(state.route.mock.calls).toEqual([
+      [state.copilot, source, undefined], [state.claude, source, undefined], [state.unified, source, "local-source"],
+    ]);
   });
 
   it("uses the regular Codex adapter for metadata without registering the private execution adapter", async () => {

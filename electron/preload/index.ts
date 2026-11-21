@@ -10,6 +10,8 @@ const _settingsCache: Record<string, unknown> = ipcRenderer.sendSync("settings:l
 const electronAPI = {
   remoteHosts: {
     list: () => ipcRenderer.invoke("remoteHosts:list") as Promise<RemoteHostState[]>,
+    discoverDevTunnels: (interactive: boolean) => ipcRenderer.invoke("remoteHosts:discoverDevTunnels", interactive) as Promise<import("../../shared/dev-tunnel-metadata").DevTunnelDiscoveryResult>,
+    cancelDevTunnelDiscovery: () => ipcRenderer.invoke("remoteHosts:cancelDevTunnelDiscovery") as Promise<void>,
     save: (input: RemoteHostInput, id?: string) => ipcRenderer.invoke("remoteHosts:save", input, id) as Promise<SavedRemoteHost>,
     connect: (id: string) => ipcRenderer.invoke("remoteHosts:connect", id) as Promise<void>,
     disconnect: (id: string) => ipcRenderer.invoke("remoteHosts:disconnect", id) as Promise<void>,

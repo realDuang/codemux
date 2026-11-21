@@ -2,7 +2,6 @@ import { defineConfig, mergeConfig } from "vite";
 import webConfig from "./vite.web.config";
 
 import type { IncomingMessage } from "http";
-import { tunnelManager } from "./scripts/tunnel-manager";
 import { remoteAccessManager } from "./scripts/remote-access-manager";
 import { createRemoteAccessPlugin } from "./scripts/remote-access-plugin";
 import { preserveProxyRequestIdentity } from "./scripts/auth-proxy-plugin";
@@ -34,7 +33,7 @@ const localAuthOptions = {
 
 export default mergeConfig(webConfig, defineConfig({
   plugins: [
-    createRemoteAccessPlugin(remoteAccessManager, () => tunnelManager.stop()),
+    createRemoteAccessPlugin(remoteAccessManager, () => remoteAccessManager.stop()),
     {
       name: "standalone-auth-api",
       configureServer(server) {

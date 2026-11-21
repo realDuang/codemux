@@ -8,6 +8,7 @@ import { ensureGatewayInitialized, refreshEngineConfigState } from "../lib/engin
 import { ChannelManagementSettings } from "../components/ChannelManagementSettings";
 import { TerminalSettingsSection } from "../components/TerminalSettingsSection";
 import { ProjectFilterSettings } from "../components/ProjectFilterSettings";
+import { SessionSourcesSettings } from "../components/SessionSourcesSettings";
 import { formatMessage, useI18n } from "../lib/i18n";
 import { logger } from "../lib/logger";
 import { useAuthGuard } from "../lib/useAuthGuard";
@@ -758,19 +759,19 @@ export default function Settings() {
                               <div class="flex items-start justify-between gap-4">
                                 <div class="min-w-0">
                                   <h4 class="text-sm font-medium text-[var(--cm-text)]">
-                                    {formatMessage(t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                    {formatMessage(engine.sessionSharing?.kind === "attach" ? t().sessionSharing.attachTitle : t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
                                   </h4>
                                   <p class="mt-1 text-xs leading-relaxed text-[var(--cm-text-muted)]">
-                                    {formatMessage(t().sessionSharing.description, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                    {formatMessage(engine.sessionSharing?.kind === "attach" ? t().sessionSharing.attachDescription : t().sessionSharing.description, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
                                   </p>
                                 </div>
                                 <button
                                   type="button"
                                   role="switch"
                                   aria-checked={engine.sessionSharing?.enabled === true}
-                                  aria-label={formatMessage(t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
+                                  aria-label={formatMessage(engine.sessionSharing?.kind === "attach" ? t().sessionSharing.attachTitle : t().sessionSharing.title, { peer: engine.sessionSharing?.peerName || t().sessionSharing.peer })}
                                   aria-busy={sharingPending()[engine.type] === true}
-                                  disabled={sharingPending()[engine.type] || (engine.status !== "running" && !engine.sessionSharing?.enabled)}
+                                  disabled={sharingPending()[engine.type] || (engine.status !== "running" && !engine.sessionSharing?.enabled && engine.sessionSharing?.kind !== "attach")}
                                   onClick={() => void handleSessionSharingToggle(engine.type, !engine.sessionSharing?.enabled)}
                                   class={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--cm-accent)] disabled:cursor-wait disabled:opacity-50 ${engine.sessionSharing?.enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-slate-600"}`}
                                 >
@@ -815,6 +816,8 @@ export default function Settings() {
                 </div>
               </Show>
             </section>
+
+            <SessionSourcesSettings />
 
             <Show when={!isElectron() && showWebChannelSection()}>
               <ChannelManagementSettings />

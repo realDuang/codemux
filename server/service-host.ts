@@ -12,6 +12,10 @@ import { EngineManager } from "../electron/main/gateway/engine-manager";
 import { GatewayServer } from "../electron/main/gateway/ws-server";
 import { OpenCodeAdapter } from "../electron/main/engines/opencode";
 import { CopilotSdkAdapter } from "../electron/main/engines/copilot";
+import { HostRoutedAdapter } from "../electron/main/engines/host-routed-adapter";
+import { AgentHostService } from "../electron/main/session-sources/agent-host/service";
+import { isAgentHostSession } from "../electron/main/session-sources/agent-host/projection";
+import { discoverAgentHosts } from "../electron/main/session-sources/agent-host/discovery";
 import { ClaudeCodeAdapter } from "../electron/main/engines/claude";
 import { CodexAdapter } from "../electron/main/engines/codex";
 import type { EngineAdapter } from "../electron/main/engines/engine-adapter";
@@ -96,11 +100,27 @@ export function createServiceHost(
     }),
     onError: (_id, error) => mainLog.warn("Codex session synchronization failed:", error.message),
   }) : undefined;
+  const agentHost = options.engines ? undefined : new AgentHostService({
+      enabled: loadSettings().vscodeAgentHostEnabled === true,
+      persistEnabled: async enabled => { await saveSettings({ vscodeAgentHostEnabled: enabled }); },
+      discover: () => {
+        const paths = loadSettings().vscodeAgentHostUserDataPaths;
+        return discoverAgentHosts(Array.isArray(paths) && paths.every(path => typeof path === "string") ? paths : undefined);
+      },
+      knownSessions: () => conversationStore.list()
+        .filter(conversation => conversation.engineSessionId && isAgentHostSession(conversation.engineSessionId))
+        .map(conversation => ({
+          id: conversation.engineSessionId!, engineType: conversation.engineType, title: conversation.engineTitle,
+          directory: conversation.directory, engineMeta: conversation.engineMeta,
+          time: { created: conversation.createdAt, updated: conversation.updatedAt },
+        })),
+    });
+  if (agentHost) engineManager.registerSessionSource(agentHost);
   const engines = options.engines ?? [
     ["OpenCode", new OpenCodeAdapter({ port: OPENCODE_PORT })],
-    ["Copilot", new CopilotSdkAdapter()],
-    ["Claude", new ClaudeCodeAdapter()],
-    ["Codex", codex!],
+    ["Copilot", new HostRoutedAdapter(new CopilotSdkAdapter(), agentHost!)],
+    ["Claude", new HostRoutedAdapter(new ClaudeCodeAdapter(), agentHost!)],
+    ["Codex", new HostRoutedAdapter(codex!, agentHost!, enrollment!.sourceId)],
   ] as const;
   for (const [, adapter] of engines) engineManager.registerAdapter(adapter);
 
@@ -132,6 +152,7 @@ export function createServiceHost(
     } : undefined,
     engineManager,
     engines,
+    sessionSources: agentHost ? [["VS Code", agentHost]] : [],
     scheduledTaskService,
     authApiServer,
     productionServer,

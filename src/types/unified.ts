@@ -12,6 +12,8 @@ export type SessionActivityStatus = "idle" | "running" | "completed" | "waiting"
 export type EngineStatus = "stopped" | "starting" | "running" | "error";
 
 export interface EngineSharingState {
+  /** Attach to externally created chats rather than publish locally created chats. */
+  kind?: "attach";
   enabled: boolean;
   available: boolean;
   status: "disabled" | "connecting" | "connected" | "unavailable";
@@ -19,7 +21,23 @@ export interface EngineSharingState {
   error?: string;
 }
 
+/** A host connection is independent of the engines its providers run. */
+export interface SessionSourceState extends EngineSharingState {
+  id: string;
+  providers: Array<{ id: string; supported: boolean; engineType?: EngineType }>;
+}
+
 export interface SessionConnectionInfo {
+  /** Capabilities of the session executor, which may differ from the local engine. */
+  capabilities?: EngineCapabilities;
+  authoritative?: boolean;
+  localRemovalOnly?: boolean;
+  canRename?: boolean;
+  readOnly?: boolean;
+  models?: UnifiedModelInfo[];
+  modes?: AgentMode[];
+  /** Connection source, not evidence of which application created the chat. */
+  source?: string;
   /** Known creation application, independent of the current executor. */
   origin?: string;
   executor?: string;
@@ -48,6 +66,10 @@ export interface EngineInfo {
 }
 
 export interface EngineCapabilities {
+  /** Message and part IDs already include source/session identity, including offline mirrors. */
+  sourceScopedMessageIds?: boolean;
+  /** Additional externally owned conversations; new local sessions keep their normal lifecycle. */
+  externalSessionCatalog?: boolean;
   sessionSharing?: boolean;
   /** Session messages and activity are owned by a connected external client. */
   authoritativeSessionState?: boolean;
@@ -630,6 +652,8 @@ export interface QuestionInfo {
 }
 
 export interface UnifiedQuestion {
+  /** Shared prompt or context for the entire question request. */
+  message?: string;
   /** Backend-validated HTTP(S) URL for an external elicitation flow. */
   externalUrl?: string;
   /** Override the engine default for dismissing this individual question. */
@@ -832,6 +856,8 @@ export const GatewayRequestType = {
   ENGINE_CAPABILITIES: "engine.capabilities",
   ENGINE_SHARING_GET: "engine.sharing.get",
   ENGINE_SHARING_SET: "engine.sharing.set",
+  SESSION_SOURCE_LIST: "session.source.list",
+  SESSION_SOURCE_SET: "session.source.set",
 
   // Session
   SESSION_LIST: "session.list",

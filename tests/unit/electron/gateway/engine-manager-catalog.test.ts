@@ -3,6 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EngineAdapter } from "../../../../electron/main/engines/engine-adapter";
+import { AgentHostService } from "../../../../electron/main/session-sources/agent-host/service";
+import { HostRoutedAdapter } from "../../../../electron/main/engines/host-routed-adapter";
+import { MockEngineAdapter } from "../../../../electron/main/engines/mock-adapter";
+import { createAgentHostFixture } from "../session-sources/agent-host/fixture";
 import { EngineManager } from "../../../../electron/main/gateway/engine-manager";
 import { conversationStore } from "../../../../electron/main/services/conversation-store";
 import { desktopMessageId } from "../../../../electron/main/engines/codex/desktop-state";
@@ -133,6 +137,63 @@ describe("EngineManager catalog integration", () => {
     adapter.capabilities = { ...adapter.capabilities, confirmedSessionRemoval: true, hideArchivedSessions: true };
     return vi.spyOn(adapter, "removeSession");
   };
+
+  it.each(["claude", "codex"])("routes and preserves %s host conversations through the gateway independently of SDK health", async engineType => {
+    const host = await createAgentHostFixture(engineType);
+    const source = new AgentHostService({ enabled: true, discover: async () => [host.endpoint] });
+    const sdk = new MockEngineAdapter({ engineType });
+    const routed = new HostRoutedAdapter(sdk, source);
+    const create = vi.spyOn(sdk, "createSession"), send = vi.spyOn(sdk, "sendMessage");
+    manager.registerSessionSource(source);
+    manager.registerAdapter(routed);
+    try {
+      await source.start();
+      await expect.poll(() => manager.listAllSessions().filter(session => session.engineType === engineType).length).toBe(1);
+      const session = manager.listAllSessions().find(session => session.engineType === engineType)!;
+      const nativeId = conversationStore.get(session.id)!.engineSessionId;
+      expect(nativeId).toMatch(/^ahp:v1:/);
+      expect(manager.listSessionSources()).toEqual([expect.objectContaining({ id: "vscode", status: "connected" })]);
+      await manager.sendMessage(session.id, [{ type: "text", text: "host gateway prompt" }]);
+      expect(host.chat.activeTurn?.message.text).toBe("host gateway prompt");
+      const before = await manager.listMessages(session.id);
+      sdk.emit("status.changed", { engineType, status: "error", error: "Local runtime unavailable" });
+      await expect.poll(async () => (await manager.getSession(session.id))?.connection?.available).toBe(true);
+      await manager.setSessionSourceEnabled("vscode", false);
+      await expect.poll(async () => (await manager.getSession(session.id))?.connection?.available).toBe(false);
+      await expect(manager.sendMessage(session.id, [{ type: "text", text: "no SDK fallback" }])).rejects.toThrow();
+      expect((await manager.listMessages(session.id)).map(message => message.id)).toEqual(before.map(message => message.id));
+      expect(conversationStore.get(session.id)?.engineSessionId).toBe(nativeId);
+      await manager.setSessionSourceEnabled("vscode", true);
+      await expect.poll(async () => (await manager.getSession(session.id))?.connection?.available).toBe(true);
+      expect((await manager.listMessages(session.id)).map(message => message.id)).toEqual(before.map(message => message.id));
+      expect(create).not.toHaveBeenCalled();
+      expect(send).not.toHaveBeenCalled();
+    } finally {
+      await source.stop();
+      await host.close();
+    }
+  });
+
+  it.each([false, true])("only requires an already-connected executor when explicitly declared: %s", async (requiresOwner) => {
+    adapter.snapshot.sessions[0].connection = { shared: true, available: false,
+      ...(requiresOwner ? { authoritative: true } : {}) };
+    publish();
+    const conv = manager.listAllSessions()[0];
+    await manager.getSession(conv.id);
+    expect(adapter.restoreSession).toHaveBeenCalledTimes(requiresOwner ? 0 : 1);
+  });
+
+  it("validates effort against the session driver rather than the engine default", async () => {
+    adapter.capabilities = { ...adapter.capabilities, reasoningEffortOptions: ["low", "medium", "high", "max"] };
+    vi.spyOn(adapter, "getSessionCapabilities").mockImplementation(() => new AgentHostService().getCapabilities());
+    const setEffort = vi.spyOn(adapter, "setReasoningEffort").mockImplementation(async (id, effort) => {
+      adapter.snapshot.sessions.find(session => session.id === id)!.reasoningEffort = effort ?? undefined;
+    });
+    publish();
+    const conv = manager.listAllSessions()[0];
+    await manager.updateSessionConfig(conv.id, { reasoningEffort: "ultra" });
+    expect(setEffort).toHaveBeenCalledWith("native-thread", "ultra");
+  });
 
   it("suppresses an empty local discard across stale catalogs, events, and restart", async () => {
     const remove = useRemovalPolicy().mockResolvedValue("local");

@@ -4,21 +4,25 @@ import { DEFAULT_WEB_PORT } from "../../shared/ports";
 import { getDirectHostUrl, normalizeRemoteHostInput, parseSshAddress, type RemoteHostConnection, type RemoteHostInput, type RemoteHostState } from "../../shared/remote-hosts";
 import { formatMessage, useI18n } from "../lib/i18n";
 import { Spinner } from "./Spinner";
+import { DevTunnelDiscoveryPanel } from "./DevTunnelDiscoveryPanel";
+import { readDevTunnelUrl } from "../../shared/dev-tunnel-metadata";
 
-type ConnectionStep = "method" | "direct" | "ssh";
+type ConnectionMethod = "direct" | "ssh" | "devtunnel";
+type ConnectionStep = "method" | ConnectionMethod;
 
 const inputClass = "w-full min-w-0 rounded-lg border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] dark:bg-[var(--cm-surface-2)] px-3 py-2.5 text-sm text-gray-900 dark:text-white outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50";
 const secondaryButtonClass = "rounded-lg border border-[var(--cm-hairline-strong)] px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed";
 
 interface ConnectionIconProps {
   ssh?: boolean;
+  tunnel?: boolean;
   class?: string;
 }
 
 function ConnectionIcon(props: ConnectionIconProps) {
   return (
     <svg class={props.class} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <Show when={props.ssh} fallback={<><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" /></>}>
+      <Show when={props.ssh} fallback={<Show when={props.tunnel} fallback={<><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" /></>}><path d="M6 17a4 4 0 0 1-.9-7.9 6 6 0 0 1 11.7-1.2A4.6 4.6 0 0 1 18 17H6Z" /></Show>}>
         <rect x="3" y="4" width="18" height="16" rx="3" /><path d="m7 9 3 3-3 3M13 15h4" />
       </Show>
     </svg>
@@ -26,7 +30,7 @@ function ConnectionIcon(props: ConnectionIconProps) {
 }
 
 interface ConnectionMethodsProps {
-  onSelect: (method: "direct" | "ssh") => void;
+  onSelect: (method: ConnectionMethod) => void;
   sshAvailable: boolean;
   inline?: boolean;
 }
@@ -34,17 +38,17 @@ interface ConnectionMethodsProps {
 function ConnectionMethods(props: ConnectionMethodsProps) {
   const { t } = useI18n();
   return (
-    <div class={`grid gap-3 ${props.inline ? "sm:grid-cols-2" : "grid-cols-1"}`}>
-      <For each={["direct", "ssh"] as const}>{method => (
+    <div class={`grid gap-3 ${props.inline ? "sm:grid-cols-3" : "grid-cols-1"}`}>
+      <For each={["direct", "devtunnel", "ssh"] as const}>{method => (
         <button type="button" onClick={() => props.onSelect(method)} disabled={method === "ssh" && !props.sshAvailable}
           class="flex min-h-24 items-center gap-3 rounded-xl border border-[var(--cm-hairline-strong)] bg-[var(--cm-surface)] p-4 text-left transition-colors hover:border-[var(--cm-accent)] hover:bg-[var(--cm-accent-soft)] disabled:cursor-default disabled:opacity-50"
           data-testid={`add-host-${method}`}>
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--cm-surface-2)] text-[var(--cm-text-muted)]"><ConnectionIcon ssh={method === "ssh"} /></span>
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--cm-surface-2)] text-[var(--cm-text-muted)]"><ConnectionIcon ssh={method === "ssh"} tunnel={method === "devtunnel"} /></span>
           <span class="min-w-0 flex-1">
-            <span class="block text-sm font-medium text-[var(--cm-text)]">{method === "direct" ? t().hostConnections.directTitle : t().hostConnections.sshTitle}</span>
+            <span class="block text-sm font-medium text-[var(--cm-text)]">{method === "devtunnel" ? t().devTunnel.title : method === "direct" ? t().hostConnections.directTitle : t().hostConnections.sshTitle}</span>
             <span class="mt-1 block text-xs leading-relaxed text-[var(--cm-text-muted)]">
               <Show when={method !== "ssh" || props.sshAvailable} fallback={t().connectionCenter.desktopOnly}>
-                {method === "direct" ? t().hostConnections.directDescription : t().hostConnections.sshDescription}
+                {method === "devtunnel" ? t().devTunnel.connectDescription : method === "direct" ? t().hostConnections.directDescription : t().hostConnections.sshDescription}
               </Show>
             </span>
           </span>
@@ -77,6 +81,7 @@ export function HostConnections() {
   const [remotePort, setRemotePort] = createSignal(String(DEFAULT_WEB_PORT));
   const [advanced, setAdvanced] = createSignal(false);
   const [advancedUrl, setAdvancedUrl] = createSignal("");
+  const [tunnelUrl, setTunnelUrl] = createSignal("");
   let disposed = false;
   let revision = 0;
   let connectAttempt = 0;
@@ -92,6 +97,7 @@ export function HostConnections() {
   onCleanup(() => { disposed = true; });
 
   const dialogTitle = createMemo(() => {
+    if (step() === "devtunnel") return t().devTunnel.title;
     if (step() === "direct") return t().hostConnections.directTitle;
     if (step() === "ssh") return t().hostConnections.sshTitle;
     return t().hostConnections.addHost;
@@ -104,10 +110,10 @@ export function HostConnections() {
 
   const reset = () => {
     setEditingId(undefined); setName(""); setHost(""); setPort(String(DEFAULT_WEB_PORT));
-    setUseTls(false); setSshAddress(""); setRemotePort(String(DEFAULT_WEB_PORT)); setAdvanced(false); setAdvancedUrl(""); setError("");
+    setUseTls(false); setSshAddress(""); setRemotePort(String(DEFAULT_WEB_PORT)); setAdvanced(false); setAdvancedUrl(""); setTunnelUrl(""); setError("");
   };
   const handleAdd = () => { reset(); setStep("method"); };
-  const handleMethod = (method: "direct" | "ssh") => { reset(); setStep(method); };
+  const handleMethod = (method: ConnectionMethod) => { reset(); setStep(method); };
   const handleClose = () => { if (!busy()) { setStep(null); reset(); } };
   const handleBack = () => { if (editingId()) handleClose(); else { setAdvanced(false); setStep("method"); } };
   const handleCancelConnect = () => {
@@ -145,8 +151,8 @@ export function HostConnections() {
     setError(""); setAdvanced(value => !value);
   };
 
-  const handleConnect = async (event: SubmitEvent) => {
-    event.preventDefault();
+  const handleConnect = async (event?: SubmitEvent) => {
+    event?.preventDefault();
     if (busy()) return;
     let input: RemoteHostInput;
     try {
@@ -156,6 +162,10 @@ export function HostConnections() {
         try { parseSshAddress(sshAddress()); } catch { throw new Error(t().hostConnections.invalidSsh); }
         if (!/^\d+$/.test(remotePort().trim()) || Number(remotePort()) < 1 || Number(remotePort()) > 65535) throw new Error(t().hostConnections.invalidPort);
         connection = { type: "ssh", address: sshAddress().trim(), remotePort: Number(remotePort()) };
+      } else if (step() === "devtunnel") {
+        const origin = readDevTunnelUrl(tunnelUrl());
+        if (!origin) throw new Error(t().devTunnel.invalidLink);
+        connection = { type: "direct", host: new URL(origin).hostname, port: 443, useTls: true };
       } else connection = directConnection();
       input = normalizeRemoteHostInput({ name: name().trim(), connection });
     } catch (cause) { setError(cause instanceof Error ? cause.message : t().hostConnections.invalidConnection); return; }
@@ -180,7 +190,9 @@ export function HostConnections() {
   const handleEdit = (saved: RemoteHostState) => {
     reset(); setEditingId(saved.id); setName(saved.name);
     if (saved.connection.type === "direct") {
-      setHost(saved.connection.host); setPort(String(saved.connection.port)); setUseTls(saved.connection.useTls); setStep("direct");
+      const url = getDirectHostUrl(saved.connection);
+      if (readDevTunnelUrl(url)) { setTunnelUrl(url); setStep("devtunnel"); }
+      else { setHost(saved.connection.host); setPort(String(saved.connection.port)); setUseTls(saved.connection.useTls); setStep("direct"); }
     } else { setSshAddress(saved.connection.address); setRemotePort(String(saved.connection.remotePort)); setStep("ssh"); }
   };
 
@@ -194,6 +206,7 @@ export function HostConnections() {
   };
 
   const connectionLabel = (connection: RemoteHostConnection) => connection.type === "direct" ? getDirectHostUrl(connection) : connection.address;
+  const isDevTunnel = (connection: RemoteHostConnection) => connection.type === "direct" && !!readDevTunnelUrl(getDirectHostUrl(connection));
 
   return (
     <section class="space-y-4" aria-labelledby={`${id}-heading`} data-testid="host-connections">
@@ -210,7 +223,7 @@ export function HostConnections() {
           <For each={hosts()}>{saved => (
             <div class="p-4" data-testid="saved-host">
               <div class="flex items-center gap-3">
-                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--cm-surface-2)] text-[var(--cm-text-muted)]"><ConnectionIcon ssh={saved.connection.type === "ssh"} /></span>
+                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--cm-surface-2)] text-[var(--cm-text-muted)]"><ConnectionIcon ssh={saved.connection.type === "ssh"} tunnel={isDevTunnel(saved.connection)} /></span>
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
                     <p class="truncate text-sm font-medium text-[var(--cm-text)]">{saved.name}</p>
@@ -247,10 +260,19 @@ export function HostConnections() {
         <ConnectionDialog title={dialogTitle()} busy={busy()} onClose={handleClose}>
           <Show when={step() === "method"} fallback={
             <form onSubmit={event => void handleConnect(event)} class="space-y-4">
-              <p class="text-sm leading-relaxed text-gray-500 dark:text-gray-400"><Show when={step() === "ssh"} fallback={t().hostConnections.directHint}>{t().hostConnections.sshHint}</Show></p>
-              <Show when={step() === "direct"} fallback={
+              <p class="text-sm leading-relaxed text-gray-500 dark:text-gray-400">{step() === "devtunnel" ? t().devTunnel.connectHint : step() === "ssh" ? t().hostConnections.sshHint : t().hostConnections.directHint}</p>
+              <Show when={step() === "devtunnel"}>
+                <DevTunnelDiscoveryPanel disabled={busy()} onSelect={tunnel => {
+                  if (!tunnel.url) return;
+                  setTunnelUrl(tunnel.url); setName(tunnel.name);
+                  void handleConnect();
+                }} />
+                <div><label for={`${id}-tunnel-url`} class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t().devTunnel.sharedLink}</label><input id={`${id}-tunnel-url`} value={tunnelUrl()} onInput={event => setTunnelUrl(event.currentTarget.value)} placeholder="https://example-8233.jpe1.devtunnels.ms" spellcheck={false} autocapitalize="none" disabled={busy()} class={inputClass} data-testid="devtunnel-connect-url" /></div>
+              </Show>
+              <Show when={step() === "ssh"}>
                 <div><label for={`${id}-ssh`} class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t().hostConnections.sshAddress}</label><input id={`${id}-ssh`} value={sshAddress()} onInput={event => setSshAddress(event.currentTarget.value)} placeholder="ssh://user@host" spellcheck={false} autocapitalize="none" disabled={busy()} class={inputClass} data-testid="ssh-host-address" /></div>
-              }>
+              </Show>
+              <Show when={step() === "direct"}>
                 <div class="flex gap-3">
                   <div class="min-w-0 flex-1"><label for={`${id}-host`} class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t().hostConnections.host}</label><input id={`${id}-host`} value={host()} onInput={event => setHost(event.currentTarget.value)} onBlur={() => { if (host().includes("://")) { try { const next = directConnection(); setHost(next.host); setPort(String(next.port)); setUseTls(next.useTls); } catch { /* Keep the entered address for inline validation. */ } } }} placeholder="localhost" spellcheck={false} autocapitalize="none" disabled={busy() || advanced()} class={inputClass} data-testid="direct-host" /></div>
                   <div class="w-24 shrink-0"><label for={`${id}-port`} class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">{t().hostConnections.port}</label><input id={`${id}-port`} value={port()} onInput={event => setPort(event.currentTarget.value)} inputmode="numeric" disabled={busy() || advanced()} class={inputClass} data-testid="direct-port" /></div>
@@ -261,7 +283,8 @@ export function HostConnections() {
               <button type="button" onClick={handleAdvanced} disabled={busy()} aria-expanded={advanced()} class="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 disabled:opacity-50"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" class={advanced() ? "rotate-90" : ""} aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>{t().hostConnections.advanced}</button>
               <Show when={advanced()}>
                 <div class="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-slate-900/50">
-                  <Show when={step() === "direct"} fallback={<div><label for={`${id}-remote-port`} class="mb-2 block text-xs font-medium text-gray-600 dark:text-gray-400">{t().hostConnections.remotePort}</label><input id={`${id}-remote-port`} value={remotePort()} onInput={event => setRemotePort(event.currentTarget.value)} inputmode="numeric" disabled={busy()} class={inputClass} /></div>}>
+                  <Show when={step() === "ssh"}><div><label for={`${id}-remote-port`} class="mb-2 block text-xs font-medium text-gray-600 dark:text-gray-400">{t().hostConnections.remotePort}</label><input id={`${id}-remote-port`} value={remotePort()} onInput={event => setRemotePort(event.currentTarget.value)} inputmode="numeric" disabled={busy()} class={inputClass} /></div></Show>
+                  <Show when={step() === "direct"}>
                     <div><label for={`${id}-url`} class="mb-2 block text-xs font-medium text-gray-600 dark:text-gray-400">{t().hostConnections.connectionUrl}</label><input id={`${id}-url`} value={advancedUrl()} onInput={event => setAdvancedUrl(event.currentTarget.value)} placeholder="https://codemux.example.com" autocapitalize="none" spellcheck={false} disabled={busy()} class={inputClass} data-testid="direct-url" /></div>
                   </Show>
                   <div><label for={`${id}-name`} class="mb-2 block text-xs font-medium text-gray-600 dark:text-gray-400">{t().hostConnections.displayName}</label><input id={`${id}-name`} value={name()} onInput={event => setName(event.currentTarget.value)} placeholder={t().hostConnections.optional} maxlength={100} disabled={busy()} class={inputClass} /></div>

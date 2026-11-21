@@ -154,7 +154,7 @@ export default function Chat() {
     return catalogRefresh;
   };
   const isAuthoritativeSession = (sessionId: string) =>
-    hasAuthoritativeSessionState(sessionStore.list.find((session) => session.id === sessionId)?.engineType);
+    hasAuthoritativeSessionState(sessionStore.list.find((session) => session.id === sessionId));
   const restoreSendingState = (sessionId: string) => {
     if (isAuthoritativeSession(sessionId)) {
       void gateway.getSession(sessionId).catch((error) => {
@@ -427,7 +427,12 @@ export default function Chat() {
     return sessionStore.list.find((session) => session.id === sid);
   });
   const currentSessionArchived = createMemo(() => currentSessionInfo()?.archived === true);
-  const currentSessionUnavailable = createMemo(() => currentSessionInfo()?.catalogAvailable === false);
+  const currentSessionUnavailable = createMemo(() => {
+    const session = currentSessionInfo();
+    return session?.catalogAvailable === false
+      || session?.connection?.readOnly === true
+      || (session?.connection?.authoritative === true && !session.connection.available);
+  });
   const [showArchivedSessions, setShowArchivedSessions] = createSignal(false);
   const [archivePendingId, setArchivePendingId] = createSignal<string | null>(null);
   const [newSessionPending, setNewSessionPending] = createSignal(false);
@@ -445,9 +450,12 @@ export default function Chat() {
   const currentEngineInfo = createMemo(() =>
     configStore.engines.find((engine) => engine.type === currentEngineType()),
   );
+  const currentCapabilities = createMemo(() =>
+    currentSessionInfo()?.connection?.capabilities ?? currentEngineInfo()?.capabilities,
+  );
 
   const currentAvailableModes = createMemo(() =>
-    currentEngineInfo()?.capabilities?.availableModes ?? [],
+    currentSessionInfo()?.connection?.modes ?? currentEngineInfo()?.capabilities?.availableModes ?? [],
   );
 
   const currentAgent = createMemo<AgentMode>(() => {
@@ -460,15 +468,16 @@ export default function Chat() {
   });
 
   const currentSessionModels = createMemo(() =>
-    configStore.engineModels[currentEngineType()] || [],
+    currentSessionInfo()?.connection?.models ?? configStore.engineModels[currentEngineType()] ?? [],
   );
 
-  const currentSessionModelId = createMemo(() =>
-    getSelectedModelForSession(currentEngineType(), currentSessionInfo()?.modelId),
-  );
+  const currentSessionModelId = createMemo(() => currentSessionInfo()?.connection?.authoritative
+    ? currentSessionInfo()?.modelId ?? null
+    : getSelectedModelForSession(currentEngineType(), currentSessionInfo()?.modelId));
 
-  const currentSessionReasoningEffort = createMemo(() =>
-    getEffectiveReasoningEffortForSession(
+  const currentSessionReasoningEffort = createMemo(() => currentSessionInfo()?.connection?.authoritative
+    ? currentSessionInfo()?.reasoningEffort ?? null
+    : getEffectiveReasoningEffortForSession(
       currentEngineType(),
       currentSessionInfo()?.modelId,
       currentSessionInfo()?.reasoningEffort ?? null,
@@ -489,7 +498,7 @@ export default function Chat() {
   });
 
   const currentFastModeSupported = createMemo(() =>
-    currentEngineInfo()?.capabilities?.fastModeSupported === true,
+    currentCapabilities()?.fastModeSupported === true,
   );
 
   const currentDraft = createMemo(() => {
@@ -2287,7 +2296,7 @@ export default function Chat() {
       setSendingFor(updated.id, updated.activityStatus === "running" || updated.activityStatus === "waiting");
     }
     logger.debug("[WS] session.updated received:", updated);
-    if (hasAuthoritativeSessionState(updated.engineType) && updated.modelId
+    if (hasAuthoritativeSessionState(updated) && updated.modelId
       && !configStore.engineModels[updated.engineType]?.some((model) => model.modelId === updated.modelId)) {
       refreshSharedModels(updated.engineType);
     }
@@ -2296,7 +2305,7 @@ export default function Chat() {
         s.id === updated.id
           ? {
               ...s,
-              title: hasAuthoritativeSessionState(updated.engineType) ? updated.title ?? "" : updated.title || s.title,
+              title: hasAuthoritativeSessionState(updated) ? updated.title ?? "" : updated.title || s.title,
               ...(updated.sourceUrl ? { sourceUrl: updated.sourceUrl, sourceName: updated.sourceName } : {}),
               ...(Object.prototype.hasOwnProperty.call(updated, "connection") ? { connection: updated.connection } : {}),
               ...(typeof updated.archived === "boolean" ? { archived: updated.archived } : {}),
@@ -2583,7 +2592,7 @@ export default function Chat() {
 
     try {
       await gateway.invokeCommand(sessionId, commandName, args, {
-        mode: agent.id,
+        mode: currentAvailableModes().some(mode => mode.id === agent.id) ? agent.id : undefined,
         modelId,
         reasoningEffort,
         serviceTier,
@@ -2671,7 +2680,7 @@ export default function Chat() {
 
       gateway.sendMessage(sessionId, text, {
         clientMessageId: tempMessageId,
-        mode: agent.id,
+        mode: currentAvailableModes().some(mode => mode.id === agent.id) ? agent.id : undefined,
         modelId,
         images,
         reasoningEffort,
@@ -2751,7 +2760,7 @@ export default function Chat() {
     try {
       await gateway.sendMessage(sessionId, text, {
         clientMessageId: tempMessageId,
-        mode: agent.id,
+        mode: currentAvailableModes().some(mode => mode.id === agent.id) ? agent.id : undefined,
         modelId,
         images,
         reasoningEffort,
@@ -3289,15 +3298,19 @@ export default function Chat() {
                 <div class="conversation-column">
                   <Show when={currentSessionUnavailable()}>
                     <p role="status" class="rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-500 dark:text-gray-400">
-                      <Show when={currentSessionInfo()?.connection?.available === false} fallback={t().catalog.unavailableDetail}>
-                        {t().sessionSharing.sessionUnavailable}
+                      <Show when={currentSessionInfo()?.connection?.readOnly} fallback={
+                        <Show when={currentSessionInfo()?.connection?.available === false} fallback={t().catalog.unavailableDetail}>
+                          {t().sessionSharing.sessionUnavailable}
+                        </Show>
+                      }>
+                        {t().sessionSharing.readOnly}
                       </Show>
                     </p>
                   </Show>
                   <Show when={currentSessionArchived()}>
                     <div role="status" class="flex items-center justify-between gap-3 rounded-lg bg-gray-100 dark:bg-slate-800 px-3 py-3 text-sm text-gray-600 dark:text-gray-300">
                       <p>{t().chat.archivedReadOnly}</p>
-                      <Show when={currentEngineInfo()?.capabilities?.sessionArchive}>
+                      <Show when={currentCapabilities()?.sessionArchive}>
                         <button
                           onClick={() => void handleSetSessionArchived(sessionStore.current!, false)}
                           disabled={archivePendingId() !== null || currentSessionUnavailable()}
@@ -3334,7 +3347,7 @@ export default function Chat() {
                             question={question}
                             onRespond={handleQuestionRespond}
                             onDismiss={handleQuestionDismiss}
-                            dismissLabel={(question.dismissStopsTurn ?? currentEngineInfo()?.capabilities?.questionDismissStopsTurn) ? t().question.stopTask : undefined}
+                            dismissLabel={(question.dismissStopsTurn ?? currentCapabilities()?.questionDismissStopsTurn) ? t().question.stopTask : undefined}
                           />
                         )}
                       </For>
@@ -3376,7 +3389,7 @@ export default function Chat() {
                       disabled={!sessionStore.current || currentSessionArchived() || currentSessionUnavailable()}
                       sendDisabled={!gatewayConnected() || (!isElectron() && (!webOnline() || webRecovering()))}
                       draftSaveFailed={sessionStore.inputDraftSaveFailures[sessionStore.current ?? ""] === true}
-                      imageAttachmentEnabled={currentEngineInfo()?.capabilities?.imageAttachment ?? false}
+                      imageAttachmentEnabled={currentCapabilities()?.imageAttachment ?? false}
                       availableCommands={availableCommands()}
                       onCommandInvoke={handleCommandInvoke}
                       text={currentDraft().text}
@@ -3389,8 +3402,8 @@ export default function Chat() {
                           <SessionControls
                             models={currentSessionModels()}
                             selectedModelId={currentSessionModelId() ?? null}
-                            customModelInput={currentEngineInfo()?.capabilities?.customModelInput === true}
-                            modelDisabled={currentEngineInfo()?.capabilities?.modelSwitchable === false}
+                            customModelInput={currentCapabilities()?.customModelInput === true}
+                            modelDisabled={currentCapabilities()?.modelSwitchable === false}
                             modelPlaceholder={t().chat.modelIdPlaceholder}
                             modelAriaLabel={t().engine.defaultModel}
                             supportedEfforts={currentSupportedEfforts()}

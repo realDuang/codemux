@@ -44,6 +44,8 @@ export function codexConversationSource(conversation: ConversationMeta, defaultS
 /** Metadata migration does not grant catalog admission or native deletion rights. */
 export function migrateCodexConversationMetadata(conversation: ConversationMeta): ConversationMeta {
   if (canonicalCodexEngineType(conversation.engineType) !== "codex") return conversation;
+  // Host-owned chats are not app-server threads and never gain local ownership.
+  if (conversation.engineSessionId?.startsWith("ahp:")) return conversation;
   const threadId = conversation.engineSessionId ? canonicalCodexThreadId(conversation.engineSessionId) : undefined;
   return {
     ...conversation,

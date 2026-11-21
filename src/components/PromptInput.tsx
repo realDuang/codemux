@@ -645,7 +645,7 @@ export function PromptInput(props: PromptInputProps) {
           disabled={props.disabled}
           placeholder={
             props.disabled
-              ? "Select a mode to start..."
+              ? t().prompt.placeholder
               : modePlaceholder()
           }
           rows={1}

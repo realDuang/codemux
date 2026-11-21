@@ -2,14 +2,17 @@ import { RemoteAccessController } from "../../../shared/remote-access-controller
 import { WEB_PORT } from "../../../shared/ports";
 import { loadSettings, saveSettings, mainLog } from "./logger";
 import { tunnelManager } from "./tunnel-manager";
+import { DevTunnelManager } from "../../../shared/dev-tunnel-manager";
 
 let webPort = WEB_PORT;
+const devTunnelManager = new DevTunnelManager({ loadSettings, saveSettings });
 
 export const remoteAccessManager = new RemoteAccessController({
   loadSettings,
   saveSettings,
   tunnel: tunnelManager,
   getPort: () => webPort,
+  devTunnel: devTunnelManager,
 });
 
 export function setRemoteAccessPort(port: number): void {
@@ -25,5 +28,5 @@ tunnelManager.setOnUnexpectedExit(() => {
 });
 
 export async function stopRemoteAccessTunnel(): Promise<void> {
-  await tunnelManager.stop();
+  await remoteAccessManager.stop();
 }
